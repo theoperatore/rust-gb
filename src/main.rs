@@ -2,7 +2,9 @@ mod clients;
 mod error;
 
 use actix_web::{get, middleware, web, App, HttpResponse, HttpServer, Responder};
+use dotenv::dotenv;
 use error::AppError;
+use std::env;
 
 struct AppContext {
   token: String,
@@ -26,11 +28,11 @@ async fn get_random_game(ctx: web::Data<AppContext>) -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-  std::env::set_var("RUST_LOG", "actix_web=debug,actix_server=info,info");
+  dotenv().ok();
   env_logger::init();
 
-  HttpServer::new(|| {
-    let gb_token = std::env::var("GB_TOKEN").expect("GB_TOKEN");
+  HttpServer::new(move || {
+    let gb_token = env::var("GB_TOKEN").expect("GB_TOKEN env is required");
     App::new()
       .wrap(middleware::Logger::default())
       .wrap(middleware::Compress::default())

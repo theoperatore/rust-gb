@@ -2,6 +2,9 @@ use actix_web::client::Client;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+// required by GiantBomb otherwise the api fails with: Bad Content type
+const USER_AGENT: &str = "alorg-game-of-the-day-giantbomb";
+
 #[derive(Deserialize, Serialize, Debug)]
 struct GameImage {
   original_url: Option<String>,
@@ -96,12 +99,15 @@ async fn get_max_games(client: &Client, token: &str) -> Result<i64, actix_web::E
   );
   let response = client
     .get(url)
-    .set_header("Accept-Language", "application/json")
+    .header("User-Agent", USER_AGENT)
     .send()
     .await?
     .json::<GiantBombResponse>()
     .await
-    .map_err(actix_web::Error::from)?;
+    .map_err(|e| {
+      log::error!("Error fetching max_games: {}", e);
+      actix_web::Error::from(e)
+    })?;
 
   Ok(response.number_of_total_results)
 }
@@ -114,12 +120,15 @@ async fn get_game_uri(client: &Client, token: &str, idx: i64) -> Result<String, 
 
   let response = client
     .get(url)
-    .set_header("Accept-Language", "application/json")
+    .header("User-Agent", USER_AGENT)
     .send()
     .await?
     .json::<GiantBombResponse>()
     .await
-    .map_err(actix_web::Error::from)?;
+    .map_err(|e| {
+      log::error!("Error fetching game_uri: {}", e);
+      actix_web::Error::from(e)
+    })?;
 
   let url = response.results.get(0).map(|detail| &detail.api_detail_url);
   match url {
@@ -163,12 +172,15 @@ async fn get_game_details(
 
   let response = client
     .get(url)
-    .set_header("Accept-Language", "application/json")
+    .header("User-Agent", USER_AGENT)
     .send()
     .await?
     .json::<GiantBombGameResponse>()
     .await
-    .map_err(actix_web::Error::from)?;
+    .map_err(|e| {
+      log::error!("Error fetching game_details: {}", e);
+      actix_web::Error::from(e)
+    })?;
 
   Ok(response.results)
 }
