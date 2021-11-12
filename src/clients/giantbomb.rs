@@ -1,6 +1,7 @@
 use actix_web::client::Client;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 
 // required by GiantBomb otherwise the api fails with: Bad Content type
 const USER_AGENT: &str = "alorg-game-of-the-day-giantbomb";
@@ -92,6 +93,7 @@ fn random(max: i64) -> i64 {
   rand::thread_rng().gen_range(0..max)
 }
 
+#[tracing::instrument(name = "Max games query", skip(client, token))]
 async fn get_max_games(client: &Client, token: &str) -> Result<i64, actix_web::Error> {
   let url = format!(
     "https://www.giantbomb.com/api/games/?api_key={}&limit=1&field_list=api_detail_url&format=json",
@@ -104,14 +106,12 @@ async fn get_max_games(client: &Client, token: &str) -> Result<i64, actix_web::E
     .await?
     .json::<GiantBombResponse>()
     .await
-    .map_err(|e| {
-      log::error!("Error fetching max_games: {}", e);
-      actix_web::Error::from(e)
-    })?;
+    .map_err(|e| actix_web::Error::from(e))?;
 
   Ok(response.number_of_total_results)
 }
 
+#[tracing::instrument(name = "Game uri query", skip(client, token, idx), fields(game_idx = %idx))]
 async fn get_game_uri(client: &Client, token: &str, idx: i64) -> Result<String, actix_web::Error> {
   let url = format!(
     "https://www.giantbomb.com/api/games/?api_key={}&limit=1&format=json&offset={}&field_list=api_detail_url",
@@ -124,11 +124,7 @@ async fn get_game_uri(client: &Client, token: &str, idx: i64) -> Result<String, 
     .send()
     .await?
     .json::<GiantBombResponse>()
-    .await
-    .map_err(|e| {
-      log::error!("Error fetching game_uri: {}", e);
-      actix_web::Error::from(e)
-    })?;
+    .await?;
 
   let url = response.results.get(0).map(|detail| &detail.api_detail_url);
   match url {
@@ -139,6 +135,7 @@ async fn get_game_uri(client: &Client, token: &str, idx: i64) -> Result<String, 
   }
 }
 
+#[tracing::instrument(name = "Game details query", skip(client, token, uri), fields(giantbomb_uri = %uri))]
 async fn get_game_details(
   client: &Client,
   token: &str,
@@ -163,38 +160,40 @@ async fn get_game_details(
       "expected_release_day",
       "developers",
       "deck",
-      "description",
+      // "description", // mostly html formatted nonsense that sometimes is huge in bytes
       "concepts",
       "characters",
     ]
     .join(",")
   );
 
+  let json_span = tracing::info_span!("Game detail deserialization");
   let response = client
     .get(url)
     .header("User-Agent", USER_AGENT)
     .send()
     .await?
     .json::<GiantBombGameResponse>()
+    .instrument(json_span)
     .await
     .map_err(|e| {
-      log::error!("Error fetching game_details: {}", e);
+      tracing::error!("Error fetching game_details: {:?}", e);
       actix_web::Error::from(e)
     })?;
 
   Ok(response.results)
 }
 
+#[tracing::instrument(name = "Get random game", skip(token))]
 pub async fn get_random_game(token: &str) -> Result<Game, actix_web::Error> {
   let client = Client::default();
   let max_games = get_max_games(&client, token).await?;
-  log::info!("got max games: {}", max_games);
 
   let idx = random(max_games);
-  log::info!("querying for game idx: {}", idx);
 
+  // this game uri has a HUGE detail payload
+  // let game_uri = "https://www.giantbomb.com/api/game/3030-1156/";
   let game_uri = get_game_uri(&client, token, idx).await?;
-  log::info!("querying for game uri: {}", game_uri);
 
   let game = get_game_details(&client, token, &game_uri).await?;
   Ok(game)
